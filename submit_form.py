@@ -2,14 +2,12 @@ import requests
 import random
 import datetime
 import json
-import os
 
 # ─── FORM DETAILS ────────────────────────────────────────────────────────────
-FORM_URL      = "https://docs.google.com/forms/u/0/d/e/1FAIpQLSc8RRUAG8n8nPB9dm21m_MxwHQ-JuDnEj7GnvwEkWXykkKFuQ/formResponse"
-FORM_VIEW_URL = "https://docs.google.com/forms/d/e/1FAIpQLSc8RRUAG8n8nPB9dm21m_MxwHQ-JuDnEj7GnvwEkWXykkKFuQ/viewform"
-EMAIL         = "vijaykumar.r.s67@kalvium.community"
+FORM_URL = "https://docs.google.com/forms/u/0/d/e/1FAIpQLSc8RRUAG8n8nPB9dm21m_MxwHQ-JuDnEj7GnvwEkWXykkKFuQ/formResponse"
+EMAIL    = "vijaykumar.r.s67@kalvium.community"
 
-# ─── ANSWER POOLS (10 options each) ──────────────────────────────────────────
+# ─── ANSWER POOLS ────────────────────────────────────────────────────────────
 
 KEY_TASKS = [
     "Completed assigned tasks and participated in team discussions. Reviewed project requirements and updated task progress on the tracker.",
@@ -80,44 +78,57 @@ def submit_form():
     print(f"  Challenges left : {answers['challenges_unsolved'][:70]}...")
     print(f"  Plan next day   : {answers['plan_next_day'][:70]}...")
 
+    # Try multiple payload formats to ensure submission
     data = {
         "emailAddress":     EMAIL,
         "entry.32162408":   answers["key_tasks"],
         "entry.1874357572": answers["challenges_solved"],
         "entry.199221807":  answers["challenges_unsolved"],
         "entry.1546753981": answers["plan_next_day"],
+        "fvv":              "1",
+        "fbzx":             "-1",
+        "pageHistory":      "0,1,2",
+        "submissionTimestamp": str(int(datetime.datetime.utcnow().timestamp())),
     }
 
     headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Referer":      "https://docs.google.com/forms",
-        "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Content-Type":  "application/x-www-form-urlencoded",
+        "Referer":       "https://docs.google.com/forms/d/e/1FAIpQLSc8RRUAG8n8nPB9dm21m_MxwHQ-JuDnEj7GnvwEkWXykkKFuQ/viewform",
+        "User-Agent":    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Origin":        "https://docs.google.com",
     }
 
-    print("\nSubmitting form...")
-    response = requests.post(FORM_URL, data=data, headers=headers)
+    print("\nSubmitting to Google Forms...")
+    response = requests.post(FORM_URL, data=data, headers=headers, allow_redirects=True)
 
-    if response.status_code == 200:
-        print(f"Form submitted successfully! ({today})")
+    print(f"Response status : {response.status_code}")
+    print(f"Response URL    : {response.url}")
+
+    # Google Forms returns 200 and redirects to formResponse on success
+    success = response.status_code == 200 and "formResponse" in response.url
+    if success:
+        print(f"\nForm submitted successfully!")
     else:
-        print(f"Status code: {response.status_code} (form likely still submitted)")
+        print(f"\nSubmission may have issues. Check response URL above.")
 
-    # Save submission details to a JSON file for the screenshot step
     submission = {
-        "date":              today,
-        "email":             EMAIL,
-        "status_code":       response.status_code,
-        "key_tasks":         answers["key_tasks"],
-        "challenges_solved": answers["challenges_solved"],
+        "date":                today,
+        "email":               EMAIL,
+        "status_code":         response.status_code,
+        "response_url":        response.url,
+        "success":             success,
+        "key_tasks":           answers["key_tasks"],
+        "challenges_solved":   answers["challenges_solved"],
         "challenges_unsolved": answers["challenges_unsolved"],
-        "plan_next_day":     answers["plan_next_day"],
-        "submitted_at":      datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "plan_next_day":       answers["plan_next_day"],
+        "submitted_at":        datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
     }
 
     with open("submission_details.json", "w") as f:
         json.dump(submission, f, indent=2)
 
-    print("Submission details saved to submission_details.json")
+    print("Submission details saved.")
+    return success
 
 if __name__ == "__main__":
     submit_form()
