@@ -1,95 +1,12 @@
-# name: Scheduled Form Submit
-
-# on:
-#   schedule:
-#     # Runs at 19:00 IST (UTC+5:30) Monday - Saturday -> 13:30 UTC
-#     - cron: '30 13 * * 1-6'
-#   workflow_dispatch: {}
-
-# jobs:
-#   run-form:
-#     runs-on: ubuntu-latest
-#     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v4
-
-#       - name: Set up Node.js
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: '20'
-
-#       - name: Install system deps for Puppeteer (safety)
-#         run: |
-#           sudo apt-get update
-#           # On Ubuntu 24.04 (noble) some packages are provided under different names;
-#           # use libasound2t64 which provides the ALSA libs instead of libasound2.
-#           sudo apt-get install -y ca-certificates fonts-liberation libatk-bridge2.0-0 libatk1.0-0 libcups2 libdbus-1-3 libgdk-pixbuf2.0-0 libnspr4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 libxrandr2 xvfb ffmpeg libasound2t64 libxss1
-
-#       - name: Install Node dependencies
-#         run: |
-#           cd WorkLog_Submission-main
-#           # use npm install which is tolerant if package-lock.json is missing
-#           npm install
-
-#       - name: Run form script with screenshot and video capture
-#         env:
-#           HEADLESS: 'false'
-#           DISPLAY: ':99'
-#         run: |
-#           set -e
-#           cd WorkLog_Submission-main
-
-#           FFMPEG_PID=""
-#           XVFB_PID=""
-#           cleanup() {
-#             if [ -n "$FFMPEG_PID" ]; then
-#               kill $FFMPEG_PID 2>/dev/null || true
-#               wait $FFMPEG_PID 2>/dev/null || true
-#             fi
-#             if [ -n "$XVFB_PID" ]; then
-#               kill $XVFB_PID 2>/dev/null || true
-#               wait $XVFB_PID 2>/dev/null || true
-#             fi
-#             if [ -f index-original.js ]; then
-#               mv -f index-original.js index.js
-#             fi
-#           }
-#           trap cleanup EXIT
-
-#           Xvfb :99 -screen 0 1920x1080x24 &
-#           XVFB_PID=$!
-#           sleep 3
-
-#           ffmpeg -y -video_size 1920x1080 -framerate 25 -f x11grab -i :99 -codec:v libx264 -preset ultrafast -pix_fmt yuv420p form-run.mp4 > ffmpeg.log 2>&1 &
-#           FFMPEG_PID=$!
-
-#           # Create a temporary modified version that adds screenshot before end of try block
-#           cp index.js index-original.js
-#           sed -i "s/console.log(new Date().toISOString(), 'Form fill finished');/await page.screenshot({ path: 'form-final-state.png', fullPage: true }); console.log(new Date().toISOString(), 'Screenshot captured'); console.log(new Date().toISOString(), 'Form fill finished');/g" index.js
-#           node index.js
-
-#       - name: Upload screenshot artifacts (if exists)
-#         if: always()
-#         uses: actions/upload-artifact@v4
-#         with:
-#           name: form-screenshots-${{ github.run_number }}
-#           path: WorkLog_Submission-main/*.png
-#           if-no-files-found: ignore
-
-#       - name: Upload video artifact (if exists)
-#         if: always()
-#         uses: actions/upload-artifact@v4
-#         with:
-#           name: form-video-${{ github.run_number }}
-#           path: WorkLog_Submission-main/form-run.mp4
-#           if-no-files-found: warn
-
 name: Daily Journal Form Submission
 
 on:
   schedule:
     - cron: '30 3 * * 1-6'  # Mon-Sat at 9:00 AM IST (3:30 AM UTC)
-  workflow_dispatch: {}       # Manual trigger from GitHub Actions tab
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   submit-form:
@@ -100,50 +17,46 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: pip install requests playwright && playwright install chromium
 
-      - name: Install system dependencies for Playwright
+      - name: Install Playwright system dependencies
         run: playwright install-deps chromium
 
-      - name: Start virtual display (Xvfb) for video recording
+      - name: Install ffmpeg and xvfb
+        run: sudo apt-get install -y xvfb ffmpeg
+
+      - name: Start Xvfb virtual display
         run: |
-          sudo apt-get install -y xvfb ffmpeg
           Xvfb :99 -screen 0 1280x900x24 &
-          echo "XVFB_PID=$!" >> $GITHUB_ENV
+          echo "DISPLAY=:99" >> $GITHUB_ENV
           sleep 2
-          echo "Virtual display started"
 
       - name: Start screen recording
-        env:
-          DISPLAY: ':99'
         run: |
-          ffmpeg -y -video_size 1280x900 -framerate 25 -f x11grab -i :99 \
+          ffmpeg -y -f x11grab -video_size 1280x900 -framerate 25 -i :99.0 \
             -codec:v libx264 -preset ultrafast -pix_fmt yuv420p \
             form-recording.mp4 > ffmpeg.log 2>&1 &
           echo "FFMPEG_PID=$!" >> $GITHUB_ENV
-          echo "Screen recording started"
+          sleep 1
 
       - name: Submit the form
         run: python submit_form.py
 
-      - name: Take screenshot of confirmation page
-        env:
-          DISPLAY: ':99'
+      - name: Take proof screenshot
         run: python take_screenshot.py
 
       - name: Stop screen recording
         if: always()
         run: |
-          kill ${{ env.FFMPEG_PID }} || true
+          kill ${{ env.FFMPEG_PID }} 2>/dev/null || true
           sleep 3
-          echo "Recording stopped"
 
-      - name: Upload screenshot as artifact
+      - name: Upload screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -151,7 +64,7 @@ jobs:
           path: form-confirmation-*.png
           if-no-files-found: ignore
 
-      - name: Upload video recording as artifact
+      - name: Upload video
         if: always()
         uses: actions/upload-artifact@v4
         with:
